@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generalized Helm Graph H_n Visualizer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: #f8fafc;
+      color: #0f172a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 6px;
+    }
+
+    p.subtitle {
+      font-size: 0.875rem;
+      color: #64748b;
+      margin-bottom: 20px;
+    }
+
+    .container {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 750px;
+      width: 100%;
+    }
+
+    .control-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      margin-bottom: 16px;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+    }
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    input[type="number"], input[type="text"] {
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      outline: none;
+    }
+
+    input[type="number"] {
+      width: 70px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    input:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+
+    button {
+      padding: 8px 14px;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      border: none;
+      background-color: #2563eb;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    button:hover {
+      background-color: #1d4ed8;
+    }
+
+    button.secondary {
+      background-color: #f1f5f9;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+    }
+
+    button.secondary:hover {
+      background-color: #e2e8f0;
+    }
+
+    canvas {
+      border-radius: 8px;
+      background-color: #ffffff;
+      border: 1px solid #f1f5f9;
+      cursor: pointer;
+    }
+
+    .status {
+      margin-top: 12px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #334155;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>Generalized Helm Graph $H_n$ Visualizer</h1>
+    <p class="subtitle">Click any node on canvas to toggle initial selection</p>
+
+    <div class="control-panel">
+      <div class="control-row">
+        <label for="nInput">Order $n$:</label>
+        <input type="number" id="nInput" value="8" min="3" max="30">
+        
+        <label for="setCustom">Set Vertices:</label>
+        <input type="text" id="setCustom" value="1, 3, 12, 13, 15, 16" placeholder="e.g. 0, 1, 4, 9">
+        
+        <button id="applyBtn">Load Set</button>
+      </div>
+
+      <div class="control-row">
+        <button id="stepBtn">Step Forcing</button>
+        <button id="autoBtn" class="secondary">Run All Steps</button>
+        <button id="resetBtn" class="secondary">Reset Forcing</button>
+        <button id="clearBtn" class="secondary">Clear Set</button>
+      </div>
+    </div>
+
+    <canvas id="canvas" width="600" height="600"></canvas>
+    
+    <div class="status" id="statusText">Colored Vertices: 0 / 0</div>
+  </div>
+
+  <script>
+    // --- STATE VARIABLES ---
+    let n = 8;
+    let totalNodes = 17;
+    let adj = [];
+    let positions = {};
+    let initialSet = new Set();
+    let coloredNodes = new Set();
+    let forcedSteps = [];
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+    // --- DYNAMIC GRAPH TOPOLOGY GENERATOR ---
+    function buildHelmGraph(order) {
+      n = order;
+      totalNodes = 2 * n + 1;
+      adj = Array.from({ length: totalNodes }, () => []);
+
+      // 1. Center (0) connected to inner cycle (1..n)
+      for (let i = 1; i <= n; i++) {
+        adj[0].push(i);
+        adj[i].push(0);
+      }
+
+      // 2. Inner cycle C_n (1..n)
+      for (let i = 1; i <= n; i++) {
+        let next = (i % n) + 1;
+        adj[i].push(next);
+        adj[next].push(i);
+      }
+
+      // 3. Pendant leaves (n+1 .. 2n) attached to inner ring (1..n)
+      for (let i = 1; i <= n; i++) {
+        let leaf = i + n;
+        adj[i].push(leaf);
+        adj[leaf].push(i);
+      }
+
+      // 4. Calculate Radial Geometry
+      positions = {};
+      positions[0] = { x: centerX, y: centerY };
+
+      const rInner = Math.min(180, 15 * n + 40);
+      const rOuter = Math.min(260, rInner + 80);
+
+      for (let i = 1; i <= n; i++) {
+        const angle = ((i - 1) * 2 * Math.PI / n) - Math.PI / 2;
+        positions[i] = {
+          x: centerX + rInner * Math.cos(angle),
+          y: centerY + rInner * Math.sin(angle)
+        };
+        positions[i + n] = {
+          x: centerX + rOuter * Math.cos(angle),
+          y: centerY + rOuter * Math.sin(angle)
+        };
+      }
+    }
+
+    // --- ZERO FORCING CORE ENGINE ---
+    function parseCustomSet() {
+      const input = document.getElementById('setCustom').value;
+      const parsed = input.split(/[\s,]+/)
+                          .map(v => parseInt(v.trim()))
+                          .filter(v => !isNaN(v) && v >= 0 && v < totalNodes);
+      initialSet = new Set(parsed);
+      resetForcing();
+    }
+
+    function resetForcing() {
+      coloredNodes = new Set(initialSet);
+      forcedSteps = [];
+      updateStatus();
+      draw();
+    }
+
+    function stepForcing() {
+      let newForces = [];
+      
+      for (let u of coloredNodes) {
+        let uncoloredNeighbors = adj[u].filter(v => !coloredNodes.has(v));
+        if (uncoloredNeighbors.length === 1) {
+          let target = uncoloredNeighbors[0];
+          newForces.push({ from: u, to: target });
+        }
+      }
+
+      if (newForces.length > 0) {
+        for (let force of newForces) {
+          coloredNodes.add(force.to);
+        }
+        forcedSteps.push(...newForces);
+        updateStatus();
+        draw();
+        return true;
+      } else {
+        if (coloredNodes.size < totalNodes) {
+          updateStatus("(Stuck - No single-neighbor forcing moves possible)");
+        }
+        return false;
+      }
+    }
+
+    function runAllSteps() {
+      let steps = 0;
+      while (stepForcing() && steps < totalNodes) {
+        steps++;
+      }
+    }
+
+    function updateStatus(extraText = "") {
+      const isComplete = coloredNodes.size === totalNodes;
+      document.getElementById('statusText').innerText = 
+        `Colored Vertices: ${coloredNodes.size} / ${totalNodes} ${isComplete ? '🎉 (Zero Forcing Complete!)' : extraText}`;
+      
+      // Sync text input with current initial set
+      document.getElementById('setCustom').value = Array.from(initialSet).sort((a,b) => a-b).join(', ');
+    }
+
+    // --- CANVAS RENDERER ---
+    function draw() {
+      ctx.clearRect(0, 0, width, height);
+
+      // Adaptive Node Radius based on n
+      const nodeRadius = Math.max(8, Math.min(16, 180 / n));
+
+      // Draw Edges
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1.5;
+      for (let u = 0; u < totalNodes; u++) {
+        for (let v of adj[u]) {
+          if (u < v) {
+            ctx.beginPath();
+            ctx.moveTo(positions[u].x, positions[u].y);
+            ctx.lineTo(positions[v].x, positions[v].y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Draw Forcing Vectors
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2.5;
+      for (let move of forcedSteps) {
+        const from = positions[move.from];
+        const to = positions[move.to];
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+      }
+
+      // Draw Nodes
+      for (let i = 0; i < totalNodes; i++) {
+        const { x, y } = positions[i];
+        const isColored = coloredNodes.has(i);
+
+        ctx.beginPath();
+        ctx.arc(x, y, nodeRadius, 0, 2 * Math.PI);
+
+        if (isColored) {
+          ctx.fillStyle = '#2563eb';
+          ctx.fill();
+          ctx.strokeStyle = '#1d4ed8';
+        } else {
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+          ctx.strokeStyle = '#64748b';
+        }
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Draw Labels (hide if nodes are too small)
+        if (nodeRadius >= 10) {
+          ctx.fillStyle = isColored ? '#ffffff' : '#0f172a';
+          ctx.font = `bold ${Math.max(9, nodeRadius - 3)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(i.toString(), x, y);
+        }
+      }
+    }
+
+    // --- CANVAS CLICK TO TOGGLE NODES ---
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      const nodeRadius = Math.max(8, Math.min(16, 180 / n));
+
+      for (let i = 0; i < totalNodes; i++) {
+        const { x, y } = positions[i];
+        const dist = Math.hypot(clickX - x, clickY - y);
+        if (dist <= nodeRadius + 4) {
+          if (initialSet.has(i)) {
+            initialSet.delete(i);
+          } else {
+            initialSet.add(i);
+          }
+          resetForcing();
+          break;
+        }
+      }
+    });
+
+    // --- EVENT LISTENERS ---
+    document.getElementById('applyBtn').addEventListener('click', () => {
+      const newN = parseInt(document.getElementById('nInput').value);
+      if (newN !== n) {
+        buildHelmGraph(newN);
+      }
+      parseCustomSet();
+    });
+
+    document.getElementById('nInput').addEventListener('change', (e) => {
+      const newN = Math.max(3, parseInt(e.target.value) || 3);
+      buildHelmGraph(newN);
+      parseCustomSet();
+    });
+
+    document.getElementById('stepBtn').addEventListener('click', stepForcing);
+    document.getElementById('autoBtn').addEventListener('click', runAllSteps);
+    document.getElementById('resetBtn').addEventListener('click', resetForcing);
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      initialSet.clear();
+      resetForcing();
+    });
+
+    // --- INITIAL LOAD ---
+    buildHelmGraph(8);
+    parseCustomSet();
+  </script>
+</body>
+</html>
