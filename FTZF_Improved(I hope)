@@ -53,6 +53,37 @@ Graph formats accepted
 
 from itertools import combinations, permutations
 
+try:
+    import numpy as np
+    from numba import njit
+    _HAVE_NUMBA = True
+except ImportError:
+    _HAVE_NUMBA = False
+
+
+if _HAVE_NUMBA:
+    @njit(cache=True)
+    def _zf_closure_nb(adj_mask, initial_mask, n):
+        """Numba-compiled closure for n <= 64 (uint64 masks)."""
+        black = initial_mask
+        changed = True
+        while changed:
+            changed = False
+            b = black
+            while b:
+                v = 0
+                # index of lowest set bit
+                tmp = b & (-b)
+                while (tmp >> (v + 1)) != 0:
+                    v += 1
+                b &= b - np.uint64(1)
+
+                white = adj_mask[v] & ~black
+                if white != 0 and (white & (white - np.uint64(1))) == 0:
+                    black |= white
+                    changed = True
+        return black
+
 # ---------------------------------------------------------------------------
 # Graph normalisation
 # ---------------------------------------------------------------------------
@@ -107,39 +138,46 @@ def _adjacency_lists(g):
 
 def _zf_closure(adj_mask, initial_mask, n):
     """
-    Compute the zero forcing closure of *initial_mask*.
+    Compute the zero forcing closure of *initial_mask* using a worklist.
 
-    Uses the standard colour-change rule: a black vertex v can force its
-    unique white neighbour to become black.
-
-    Parameters
-    ----------
-    adj_mask : list of int
-        ``adj_mask[i]`` is a bitmask of the neighbours of vertex ``i``.
-    initial_mask : int
-        Bitmask of the initially black vertices.
-    n : int
-        Number of vertices.
-
-    Returns
-    -------
-    int
-        Bitmask of all black vertices after propagation.
+    Only vertices whose neighbourhood may have changed are re-examined,
+    avoiding the full O(n) rescan every round.
     """
     black = initial_mask
-    changed = True
-    while changed:
-        changed = False
-        for v in range(n):
-            if (black >> v) & 1:          # v is black
-                white_nbrs = adj_mask[v] & ~black
-                # Check for exactly one white neighbour (non-zero power of two)
-                if white_nbrs and not (white_nbrs & (white_nbrs - 1)):
-                    black |= white_nbrs
-                    changed = True
+
+    # Candidates: black vertices that might still have exactly one white nbr.
+    # Start with every black vertex.
+    worklist = []
+    b = black
+    while b:
+        v = (b & -b).bit_length() - 1   # index of lowest set bit
+        worklist.append(v)
+        b &= b - 1
+
+    while worklist:
+        v = worklist.pop()
+        white_nbrs = adj_mask[v] & ~black
+        # exactly one white neighbour?
+        if white_nbrs and not (white_nbrs & (white_nbrs - 1)):
+            u = white_nbrs.bit_length() - 1   # the forced vertex
+            black |= white_nbrs
+            # u is now black and may be able to force -> add it
+            worklist.append(u)
+            # Any black neighbour of u that was "stuck" at 2 white nbrs
+            # might now be down to 1 -> re-add black neighbours of u.
+            stuck = adj_mask[u] & black
+            while stuck:
+                w = (stuck & -stuck).bit_length() - 1
+                worklist.append(w)
+                stuck &= stuck - 1
     return black
 
-
+def _closure(adj_mask, initial_mask, n):
+    """Dispatch to the fastest available closure implementation."""
+    if _HAVE_NUMBA and n <= 63:
+        adj_np = np.array(adj_mask, dtype=np.uint64)
+        return int(_zf_closure_nb(adj_np, np.uint64(initial_mask), n))
+    return _zf_closure(adj_mask, initial_mask, n)
 
 def _bitmask_from_vertices(vertices, subset):
     """Return the bitmask for ``subset`` using the given ordered ``vertices``."""
